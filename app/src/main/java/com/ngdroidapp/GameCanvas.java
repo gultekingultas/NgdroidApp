@@ -1,19 +1,19 @@
 package com.ngdroidapp;
 
+import android.app.AppOpsManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.media.SoundPool;
+import android.view.Window;
 
 import java.util.Random;
 import java.util.Vector;
 
 import istanbul.gamelab.ngdroid.base.BaseCanvas;
+import istanbul.gamelab.ngdroid.core.AppManager;
 import istanbul.gamelab.ngdroid.core.NgMediaPlayer;
 import istanbul.gamelab.ngdroid.util.Log;
 import istanbul.gamelab.ngdroid.util.Utils;
-import android.media.AudioManager;
-import android.media.AudioTrack;
 
 
 /**
@@ -24,22 +24,28 @@ import android.media.AudioTrack;
 
 public class GameCanvas extends BaseCanvas {
 
-    private Bitmap tileset, spritesheet, bullet, enemy, explode;
+    private Bitmap tileset, spritesheet, bullet, enemy, explode, laser;
     private Rect tilesrc, tiledst, spritesrc, spritedst, bulletsrc, enemysrc, enemydst,explodesrc, explodedst;
-
+    private Rect lasersrc, laserdst1 , laserdst2;
     private int kareno, animasyonno, animasyonyonu, bulletoffsetx_temp, bulletoffsety_temp;
-
+    private Bitmap buttons;
+    private Rect playsrc, playdst , restartsrc, restartdst,exitsrc,exitdst;
     private int hiz, hizx, hizy, spritex, spritey,  bulletspeedy, bulletspeed;
     private int bulletx_temp, bullety_temp;//ekrana basılacak merminin koordinatları
     private int explodeframeno; // image'deki src için. ilk 64x64 lük kısım manuel alıyoruz. fonksiyonda tersten gidecez ters cevir.
     private boolean enemyexist , exploded;
     private int sesefekti_patlama; // müzigin bir kere calıp bitmesi icin
     private int enemyspeedx, enemyspeedy,enemyx, enemyy, donmenoktasi;
+    private long prevtime, time; // robotun mermi sıklıgını belirleyecek
     private NgMediaPlayer arkaplan_muzik;
-    private boolean donmeboolean;
+    private boolean donmeboolean , enemyfire ;
+    public boolean spriteexist;
     private Random enemyrnd;
+    private int laserspeed , lasery , laser1x , laser2x; // laser1x ve laser2x , lazerin ateslendikten sonraki güzergahı , konumu icin lazım
     public Vector <Rect> bulletdst; //jenerik yapı ->
     public Vector <Integer>  bulletx2, bullety2, bulletoffsetx2, bulletoffsety2, bulletspeedx2, bulletspeedy2;
+    private boolean guishow;
+    private boolean playshow;
 
     int touchx, touchy;//Ekranda bastigimiz yerlerin koordinatlari
 
@@ -54,6 +60,18 @@ public class GameCanvas extends BaseCanvas {
         arkaplan_muzik.prepare();
         arkaplan_muzik.start();
 
+        guishow = false;
+        buttons = Utils.loadImage(root,"images/buttons.png");
+        playsrc = new Rect();
+        playdst = new Rect();
+        restartsrc = new Rect();
+        restartdst = new Rect();
+        exitdst= new Rect();
+        exitsrc = new Rect();
+        playshow=true;
+
+
+
         try{
             sesefekti_patlama = root.soundManager.load("sounds/se1.wav");
         }
@@ -67,7 +85,7 @@ public class GameCanvas extends BaseCanvas {
         tiledst = new Rect();
 
         spritesheet = Utils.loadImage(root,"images/cowboy.png");
-
+        spriteexist=true;
         spritesrc = new Rect();
         spritedst = new Rect();
 
@@ -79,7 +97,7 @@ public class GameCanvas extends BaseCanvas {
         enemysrc = new Rect();
         enemydst = new Rect();
         enemyexist = true;
-
+        enemyfire=false;
         enemyspeedx=10;
         enemyspeedy=0;
         enemyx=getWidthHalf()-128; // ekranın ortasından baslasın
@@ -88,6 +106,16 @@ public class GameCanvas extends BaseCanvas {
         donmenoktasi=getWidth();
         donmeboolean=true;
         enemyrnd = new Random(); // rastgele sayı üretme 0-1 arası
+
+        laser = Utils.loadImage(root,"images/beams1.png");
+        lasersrc =new Rect();
+        laserdst1 = new Rect(-100,-100,-100,-100);
+        laserdst2 = new Rect(-100,-100,-100,-100);
+
+        laserspeed = 16;
+        lasery =-400;
+
+        prevtime = System.currentTimeMillis();
         // endregion
         explode=Utils.loadImage(root,"images/exp2_0.png");
         explodesrc=new Rect();
@@ -125,14 +153,66 @@ public class GameCanvas extends BaseCanvas {
         bulletspeedy2 = new Vector<>();
         bulletoffsetx2 = new Vector<>();
         bulletoffsety2 = new Vector<>();
+
+
     }
 
 
     public void update() {
-
-
         tilesrc.set(0,0,64,64);
+        playsrc.set(0,0,256,256);
 
+        playdst.set(getWidthHalf()-256 , getHeightHalf()-64 , getWidthHalf()-128 , getHeightHalf()+64);
+        if (playshow)
+        {
+
+
+            return;      // Play butonuna basılmadan oyun baslamayacak
+        }
+        // sol üst sag alt
+
+
+        restartsrc.set(256,0,512,256);
+        restartdst.set(getWidthHalf()-64 , getHeightHalf()-64 , getWidthHalf()+64 , getHeightHalf()+64);
+        exitsrc.set(512,0,768,256);
+        exitdst.set(getWidthHalf()+128 , getHeightHalf()-64 , getWidthHalf()+256 , getHeightHalf()+64);
+
+
+
+
+        lasersrc.set(0,0,64,128);
+
+
+
+        laserdst1.set(laser1x,enemyy-128,enemyx+64,enemyy);
+        laserdst2.set(laser2x ,enemyy-128,enemyx+256, enemyy );
+
+        time = System.currentTimeMillis(); // robotun ateş sistemi için üretilen bir değer döndürür. Milisaniye cinsinden.
+        if (time > prevtime+6000 && enemyexist) // milisn cinsinden oldugu icin 3000. 3 saniyede bir calısacak. Yani bu sürede lazer ekranın dısına cıkmazsa o lazeri silip  bastan atacaktır.
+        // karakter mermisinde yaptıgımızı yapmamak icin ugrasmamak icin süreyi uzatıyoruz
+        {
+            prevtime=time;
+
+            laser1x = enemyx;
+            laser2x = enemyx+192;
+
+            lasery = enemyy-100;
+        }
+        lasery-=laserspeed;
+        // buradaki laser'lar ateslendikten sonraki noktaları belirlemek icin
+
+        laserdst1.set(laser1x , lasery , laser1x+64, lasery+128);
+        laserdst2.set(laser2x , lasery , laser2x+64 , lasery+128);
+
+        if (spritedst.intersect(laserdst1) || spritedst.intersect(laserdst2))
+        {
+            spritedst.set(0,0,0,0);
+            spriteexist=false;
+            guishow=true;
+
+        }
+
+        //
         if (donmeboolean) // DONDURME
         {
             if (enemyspeedx >0)
@@ -163,6 +243,7 @@ public class GameCanvas extends BaseCanvas {
 
         if (enemyexist) {
             enemysrc.set(0, 0, 64, 64);
+            enemyfire=true;
             // sol ust sag alt
              //enemydst.set(getWidthHalf() - 128, getHeight() - 256, getWidthHalf() + 128, getHeight());
             enemydst.set(enemyx,enemyy,enemyx+256,enemyy+256);
@@ -180,8 +261,8 @@ public class GameCanvas extends BaseCanvas {
             if(enemydst.contains(bulletdst.elementAt(i)))
             {
 
-                Log.i("uyarı","KARDES NABIYON GAFAMA GELDI");
-                explodedst.set(bulletx2.elementAt(i)-64,bullety2.elementAt(i)-64,bulletx2.elementAt(i)+64,bullety2.elementAt(i)+64);
+               // Log.i("uyarı","KARDES NABIYON GAFAMA GELDI");
+                explodedst.set(enemyx,enemyy,enemyx+256,enemyy+256);
                 bulletx2.removeElementAt(i);
                 bullety2.removeElementAt(i);
                 bulletdst.removeElementAt(i);
@@ -233,7 +314,7 @@ public class GameCanvas extends BaseCanvas {
                 bulletspeedx2.removeElementAt(i);
                 bulletspeedy2.removeElementAt(i);
             }
-            Log.i("Control", String.valueOf(bulletx2.size()));
+          //  Log.i("Control", String.valueOf(bulletx2.size()));
         }
 
 
@@ -265,20 +346,23 @@ public class GameCanvas extends BaseCanvas {
 
         if(Math.abs(hizx) > 0 || Math.abs(hizy) > 0)
             animasyonno = 1;
-        else
+        else {
             animasyonno = 0;
-
-        spritesrc.set(kareno*128, animasyonyonu*128,(kareno+1)*128, (animasyonyonu+1)*128);//Resimden aldigimiz koordinatlar
-        spritedst.set(spritex, spritey, spritex+256, spritey+256);//Ekrana cizilecegi koordinatlar
-
-        bulletsrc.set(0,0,70,70);
-        //bulletdst.set(bulletx_temp, bullety_temp, bulletx_temp + 32, bullety_temp + 32);
-
-        for(int i=0; i < bulletx2.size(); i++)
-        {
-            bulletdst.elementAt(i).set(bulletx2.elementAt(i), bullety2.elementAt(i), bulletx2.elementAt(i) + 32, bullety2.elementAt(i) + 32);
         }
-    }
+            spritesrc.set(kareno * 128, animasyonyonu * 128, (kareno + 1) * 128, (animasyonyonu + 1) * 128);//Resimden aldigimiz koordinatlar
+            if (spriteexist) {
+                spritedst.set(spritex, spritey, spritex + 256, spritey + 256);//Ekrana cizilecegi koordinatlar
+            }
+
+
+            bulletsrc.set(0, 0, 70, 70);
+            //bulletdst.set(bulletx_temp, bullety_temp, bulletx_temp + 32, bullety_temp + 32);
+
+            for (int i = 0; i < bulletx2.size(); i++) {
+                bulletdst.elementAt(i).set(bulletx2.elementAt(i), bullety2.elementAt(i), bulletx2.elementAt(i) + 32, bullety2.elementAt(i) + 32);
+            }
+        }
+
 
 
 
@@ -316,6 +400,21 @@ public class GameCanvas extends BaseCanvas {
         {
             canvas.drawBitmap(explode,explodesrc,explodedst,null);
         }
+
+        canvas.drawBitmap(laser , lasersrc , laserdst1 , null);
+        canvas.drawBitmap(laser , lasersrc , laserdst2 , null);
+
+        if (guishow)
+        {
+
+            canvas.drawBitmap(buttons, restartsrc, restartdst,null);
+            canvas.drawBitmap(buttons , exitsrc , exitdst, null);
+        }
+        if (playshow)
+        {
+            canvas.drawBitmap(buttons, playsrc, playdst,null);
+        }
+
     }
 
     public void keyPressed(int key) {
@@ -385,54 +484,71 @@ public class GameCanvas extends BaseCanvas {
         }
 
 
-        else//mouse ile 100px den az bir degisim yaptiysak
+        else                    //mouse ile 100px den az bir degisim yaptiysak
         {
             animasyonno = 0;
 
             hizx = 0;
             hizy = 0;
+            if (spriteexist) {    // karakter ölürse ates edememesi için
+                bulletspeed = 32;
 
-            bulletspeed = 32;
+                if (animasyonyonu == 0) {
 
-            if(animasyonyonu == 0)
-            {
+                    bulletspeedx2.add(bulletspeed);
+                    bulletspeedy2.add(0);
 
-                bulletspeedx2.add(bulletspeed);
-                bulletspeedy2.add(0);
+                    bulletoffsetx_temp = 256;
+                    bulletoffsety_temp = 128;
+                } else if (animasyonyonu == 1) {
+                    bulletspeedx2.add(-bulletspeed);
+                    bulletspeedy2.add(0);
 
-                bulletoffsetx_temp = 256;
-                bulletoffsety_temp = 128;
+                    bulletoffsetx_temp = 0;
+                    bulletoffsety_temp = 128;
+                } else if (animasyonyonu == 9) {
+                    bulletspeedy2.add(bulletspeed);
+                    bulletspeedx2.add(0);
+
+                    bulletoffsetx_temp = 128;
+                    bulletoffsety_temp = 256;
+                } else if (animasyonyonu == 5) {
+                    bulletspeedy2.add(-bulletspeed);
+                    bulletspeedx2.add(0);
+
+                    bulletoffsetx_temp = 128;
+                    bulletoffsety_temp = 0;
+                }
+                bulletx2.add(spritex + bulletoffsetx_temp);
+                bullety2.add(spritey + bulletoffsety_temp);
+                bulletx_temp = spritex + bulletoffsetx_temp;
+                bullety_temp = spritey + bulletoffsety_temp;
+                bulletdst.add(new Rect(bulletx_temp, bullety_temp, bulletx_temp + 32, bullety_temp + 32)); //diziye atadık her mermi bilgisini (mermi bilgisini en son ayarlarız)
             }
-            else if(animasyonyonu == 1)
-            {
-                bulletspeedx2.add(-bulletspeed);
-                bulletspeedy2.add(0);
-
-                bulletoffsetx_temp = 0;
-                bulletoffsety_temp = 128;
-            }
-            else if(animasyonyonu == 9)
-            {
-                bulletspeedy2.add(bulletspeed);
-                bulletspeedx2.add(0);
-
-                bulletoffsetx_temp = 128;
-                bulletoffsety_temp = 256;
-            }
-            else if(animasyonyonu == 5)
-            {
-                bulletspeedy2.add(-bulletspeed);
-                bulletspeedx2.add(0);
-
-                bulletoffsetx_temp = 128;
-                bulletoffsety_temp = 0;
-            }
-            bulletx2.add(spritex+ bulletoffsetx_temp);
-            bullety2.add(spritey+ bulletoffsety_temp);
-            bulletx_temp = spritex + bulletoffsetx_temp;
-            bullety_temp = spritey + bulletoffsety_temp;
-            bulletdst.add(new Rect(bulletx_temp, bullety_temp, bulletx_temp + 32, bullety_temp + 32)); //diziye atadık her mermi bilgisini (mermi bilgisini en son ayarlarız)
         }
+
+
+
+        // Simdi buttonlar
+        if (guishow) {
+
+            if (restartdst.contains(x, y)) {
+                Log.i(TAG, "RESTART'a tıklandı");
+                root.setup();
+            }
+            if (exitdst.contains(x, y)) {
+                Log.i(TAG, "EXİT'e tıklandı");
+                System.exit(0);
+
+            }
+        }
+        if (playshow) {
+            if (playdst.contains(x, y)) {
+                playshow = false;
+            }
+        }
+
+        //
     }
 
     public Rect getexplodeframe(int frameno)
